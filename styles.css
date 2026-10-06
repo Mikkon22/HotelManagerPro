@@ -165,10 +165,11 @@ img { display: block; }
   display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   padding: 14px; border-radius: 10px; text-align: left;
   background: var(--surface); border: 1px solid var(--border);
-  transition: background-color .12s, border-color .12s;
+  transition: background-color .2s ease, border-color .2s ease;
 }
 .week-day:hover { background: var(--subtle); }
-.week-day.is-today { background: var(--accent-soft); border-color: var(--accent); }
+.week-day.is-selected { background: var(--accent-soft); border-color: var(--accent); }
+.week-day__fill { transition: width .3s ease; }
 .week-day__head { display: flex; align-items: center; gap: 6px; min-height: 23px; }
 .week-day__date { font-size: 13px; font-weight: 500; color: var(--text-2); white-space: nowrap; }
 .week-day__pct { font-size: 22px; font-weight: 700; color: var(--text); }
@@ -249,18 +250,19 @@ img { display: block; }
 .filter.is-set { border-color: var(--accent); background: var(--accent-soft); }
 
 /* ===== Table (reservations) ===== */
-.table { overflow-x: auto; }
+/* overflow-x: auto would make the y axis scrollable too; rows sliding in (FLIP) must not flash a scrollbar */
+.table { overflow-x: auto; overflow-y: hidden; }
 .thead, .trow {
   display: grid; align-items: center;
 }
 .res-grid {
   grid-template-columns:
-    minmax(194px, 194fr) minmax(110px, 110fr) minmax(170px, 170fr) minmax(170px, 170fr)
-    minmax(160px, 160fr) minmax(120px, 120fr) minmax(96px, 96fr) minmax(84px, 84fr) minmax(270px, 270fr);
-  min-width: 1374px;
+    minmax(194px, 194fr) minmax(120px, 120fr) minmax(170px, 170fr) minmax(170px, 170fr)
+    minmax(160px, 160fr) minmax(110px, 110fr) minmax(96px, 96fr) minmax(4px, 4fr) minmax(320px, 320fr);
+  min-width: 1344px;
 }
 .res-grid > .col-actions { grid-column: 9; }
-.res .actions { padding-left: 16px; padding-right: 4px; }
+.res .actions { padding-left: 16px; padding-right: 16px; }
 .avail-grid {
   grid-template-columns:
     minmax(140px, 140fr) minmax(190px, 190fr) minmax(440px, 440fr)
@@ -322,7 +324,8 @@ img { display: block; }
 .guest-name { display: flex; align-items: center; gap: 6px; }
 
 .actions { display: flex; flex-direction: row; align-items: center; gap: 8px; }
-.actions .btn--soft { margin-left: 2px; }
+/* check-in/out CTA sits at the far right of the column, away from call/edit/delete */
+.actions .btn--soft { margin-left: auto; }
 
 /* Chips */
 .chip {
@@ -348,23 +351,29 @@ img { display: block; }
 .room-status--muted span { max-width: 108px; }
 
 /* Expanded details */
-.details {
-  display: flex; flex-wrap: wrap; gap: 16px 48px; align-items: flex-start;
-  padding: 0 24px 16px 56px;
+.details { display: grid; align-items: start; padding: 2px 0 16px; }
+.details__section { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 0 12px; }
+.details__section--contact { grid-column: 1; padding-left: calc(12px + 24px + var(--expand-gap)); } /* under „Gość” and the name */
+/* stay facts reuse the row's columns (subgrid) so each pair sits exactly under a table header */
+.details__section--stay { grid-column: 2 / 5; display: grid; grid-template-columns: subgrid; gap: 0; padding: 0; }
+.details__section--notes { grid-column: 5 / -1; padding-right: 16px; } /* „Pobyt” … end */
+.facts {
+  grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; grid-template-rows: auto auto;
+  grid-auto-flow: column; gap: 10px 0; margin: 0; /* a column gap here would shift the subgrid lines */
 }
-.details__section { display: flex; flex-direction: column; gap: 8px; }
-.details__section--contact { width: 270px; flex-shrink: 0; }
-.details__section--stay { flex: 0 1 auto; }
-.facts { display: grid; grid-template-columns: repeat(3, auto); gap: 8px 32px; margin: 0; }
+.fact { padding: 0 12px; }
+.fact--a { grid-column: 1; }     /* „Pokój” */
+.fact--b { grid-column: 2; }     /* „Status zakwaterowania” */
+.fact--c { grid-column: 3; }     /* „Status pokoju” */
 .fact { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .fact dt { font-size: 12px; color: var(--text-3); }
-.fact dd { margin: 0; font-size: 14px; font-weight: 500; white-space: nowrap; }
-.details__section--notes { flex: 1 1 280px; }
+.fact dd { margin: 0; font-size: 14px; font-weight: 500; }
 .eyebrow { font-size: 12px; font-weight: 600; color: var(--text-3); letter-spacing: .72px; text-transform: uppercase; }
-.contact-line { display: flex; align-items: center; gap: 10px; }
-.contact-line .val { font-weight: 500; }
-.contact-line .act { font-size: 13px; font-weight: 600; color: var(--accent); }
-.contact-line .act:hover { text-decoration: underline; }
+.contact-line { display: flex; align-items: flex-start; gap: 8px; }
+.contact-line img { margin-top: 1px; flex-shrink: 0; }
+.contact-line .val { font-size: 13px; font-weight: 500; min-width: 0; }
+.contact-line[href^="tel:"] .val { white-space: nowrap; }
+.contact-line:hover .val { color: var(--accent); text-decoration: underline; }
 .kv { display: flex; gap: 12px; align-items: flex-start; }
 .kv dt { width: 80px; font-size: 13px; color: var(--text-2); flex-shrink: 0; }
 .kv dd { margin: 0; font-weight: 500; white-space: nowrap; }
@@ -529,7 +538,7 @@ button.field__box { text-align: left; }
 [hidden] { display: none !important; }
 
 /* View switch: fade the swapped content in instead of popping */
-.card { transition: height .2s ease; }
+.card { transition: height .32s cubic-bezier(.2, .7, .3, 1); overflow-anchor: none; }
 .view-enter .toolbar > :not(:first-child),
 .view-enter .table { animation: view-in .22s ease both; }
 @keyframes view-in {
@@ -573,10 +582,6 @@ button.field__box { text-align: left; }
   .criteria .btn--lg { justify-content: center; }
   .stepper { justify-content: space-between; }
 
-  .details { padding: 4px 16px 20px; }
-  .details__section--contact, .details__section--stay { width: 100%; }
-  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .fact dd { white-space: normal; }
   .kv dd { white-space: normal; }
 
   .modal-backdrop { padding: 12px; }

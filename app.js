@@ -8,13 +8,13 @@ const ICON = (name, size) => `<img src="assets/icons/${name}.svg" width="${size}
 const ROOMS = [
   { no: '101', floor: 1, type: '1-os.',  cap: 1, capLabel: '1 osoba',   price: 180 },
   { no: '102', floor: 1, type: '2-os.',  cap: 2, capLabel: '2 osoby',   price: 250 },
-  { no: '103', floor: 1, type: '2-os.+', cap: 4, capLabel: 'do 4 osób', price: 280 },
+  { no: '103', floor: 1, type: '4-os.', cap: 4, capLabel: 'do 4 osób', price: 280 },
   { no: '104', floor: 1, type: '1-os.',  cap: 1, capLabel: '1 osoba',   price: 180 },
   { no: '105', floor: 1, type: 'Studio', cap: 3, capLabel: 'do 3 osób', price: 350,
     oos: { from: '2024-12-20', to: '2024-12-30', reason: 'naprawa', note: 'Wymiana kranu' } },
   { no: '201', floor: 2, type: '2-os.',  cap: 2, capLabel: '2 osoby',   price: 250 },
   { no: '202', floor: 2, type: '1-os.',  cap: 1, capLabel: '1 osoba',   price: 180 },
-  { no: '203', floor: 2, type: '2-os.+', cap: 4, capLabel: 'do 4 osób', price: 320 },
+  { no: '203', floor: 2, type: '4-os.', cap: 4, capLabel: 'do 4 osób', price: 320 },
 ];
 const roomByNo = Object.fromEntries(ROOMS.map(r => [r.no, r]));
 
@@ -49,12 +49,13 @@ const HOTEL_TODAY = '2024-12-28'; // the demo's "real" today; state.today is the
 const state = {
   today: HOTEL_TODAY,
   mode: location.hash === '#dostepnosc' ? 'availability' : 'reservations',
-  expanded: new Set(['R-0002']),
+  expanded: new Set(),
   noteDraftFor: null,
   search: '',
   filters: { range: 'all', payment: 'all', floor: 'all', type: 'all' }, // range: 'all' | days from today | { from, to }
   avail: { from: '2024-12-28', to: '2024-12-30', guests: 2 }, // criteria being edited in the form
   statsOpen: false,
+  statsFrom: null, // Monday of the week shown in the 7-day tiles (set below)
 };
 
 /* ---------- Date & text helpers ---------- */
@@ -71,6 +72,8 @@ const DAY_FULL = ['Niedziela', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 
 const DAY_SHORT = ['nd', 'pn', 'wt', 'śr', 'czw', 'pt', 'sob'];
 const MONTH_GEN = ['stycznia', 'lutego', 'marca', 'kwietnia', 'maja', 'czerwca', 'lipca', 'sierpnia', 'września', 'października', 'listopada', 'grudnia'];
 const dow = iso => D(iso).getUTCDay();
+const mondayOf = iso => addDays(iso, -((dow(iso) + 6) % 7));
+state.statsFrom = mondayOf(state.today);
 const longDate = iso => { const d = D(iso); return `${DAY_FULL[d.getUTCDay()]}, ${d.getUTCDate()} ${MONTH_GEN[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
 
 // Polish plural: one / few (2-4, except 12-14) / many
@@ -143,7 +146,8 @@ function visibleReservations() {
   const q = state.search.trim().toLowerCase();
   const f = state.filters;
   return reservations
-    .filter(r => !span || (r.to >= span.start && r.from <= span.end))
+    // no date filter → current and upcoming stays only; a chosen date range shows whatever overlaps it
+    .filter(r => span ? r.to >= span.start && r.from <= span.end : r.to >= state.today)
     .filter(r => f.payment === 'all' || r.payment === f.payment)
     .filter(r => f.floor === 'all' || roomByNo[r.room].floor === Number(f.floor))
     .filter(r => f.type === 'all' || roomByNo[r.room].type === f.type)
@@ -230,10 +234,29 @@ function renderHeader() {
   btn.setAttribute('aria-expanded', state.statsOpen);
   pop.classList.toggle('is-open', state.statsOpen);
   pop.inert = !state.statsOpen;
-  if (state.statsOpen) document.getElementById('statsInner').innerHTML = renderStats();
+  if (state.statsOpen) patchStats(document.getElementById('statsInner'), renderStats());
 }
 
 /* ---------- Rendering: statistics panel ---------- */
+
+// Same 7 days as before → keep the tile elements and only update them, so the highlight glides
+// to the newly selected tile instead of the whole row being rebuilt.
+function patchStats(inner, html) {
+  const next = document.createElement('div');
+  next.innerHTML = html;
+  const cur = [...inner.querySelectorAll('.week-day')], upd = [...next.querySelectorAll('.week-day')];
+  if (cur.length !== upd.length || cur.some((b, i) => b.dataset.day !== upd[i].dataset.day)) {
+    inner.innerHTML = html;
+    return;
+  }
+  inner.querySelector('.stats-card--today').replaceWith(next.querySelector('.stats-card--today'));
+  inner.querySelector('.stats-card--week .stats-card__head').replaceWith(next.querySelector('.stats-card--week .stats-card__head'));
+  cur.forEach((b, i) => {
+    b.className = upd[i].className;
+    b.setAttribute('aria-pressed', upd[i].getAttribute('aria-pressed'));
+    if (b.innerHTML !== upd[i].innerHTML) b.innerHTML = upd[i].innerHTML;
+  });
+}
 
 const DAY_CARD = ['Nd', 'Pn', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob'];
 const DONUT = { size: 132, stroke: 14.5, gap: 1.5 };
@@ -258,6 +281,7 @@ function donutSvg(parts) {
 
 function renderStats() {
   const T = state.today;
+  const dayWord = T === HOTEL_TODAY ? 'dziś' : dm(T);
   const o = occupancy(T);
   const oos = ROOMS.length - o.total;
   const free = o.total - o.occ;
@@ -275,9 +299,9 @@ function renderStats() {
       <span class="legend__count">${n}</span><span class="legend__label">${label}</span><span class="legend__note">${note}</span></li>`).join('');
 
   const days = [...Array(7)].map((_, i) => {
-    const d = addDays(T, i);
+    const d = addDays(state.statsFrom, i);
     const x = occupancy(d);
-    return `<button class="week-day${i === 0 ? ' is-today' : ''}" data-day="${d}" title="Pokaż ${dmy(d)}">
+    return `<button class="week-day${d === T ? ' is-selected' : ''}" data-day="${d}" aria-pressed="${d === T}" title="Pokaż ${dmy(d)}">
       <span class="week-day__head"><span class="week-day__date">${DAY_CARD[dow(d)]}, ${dm(d)}</span></span>
       <span class="week-day__pct">${x.pct}%</span>
       <span class="week-day__bar"><span class="week-day__fill" style="width:${x.pct}%"></span></span>
@@ -287,7 +311,7 @@ function renderStats() {
 
   return `
     <div class="stats-card stats-card--today">
-      <h2 class="stats-card__title">Obłożenie dziś</h2>
+      <h2 class="stats-card__title">Obłożenie ${dayWord}</h2>
       <div class="donut-wrap">
         <div class="donut" role="img" aria-label="Zajęte ${o.occ} z ${o.total} pokoi (${o.pct}%)">
           ${donutSvg([
@@ -302,10 +326,10 @@ function renderStats() {
     </div>
     <div class="stats-card stats-card--week">
       <div class="stats-card__head">
-        <h2 class="stats-card__title">Obłożenie · najbliższe 7 dni</h2>
+        <h2 class="stats-card__title">Obłożenie ${dm(state.statsFrom)} – ${dm(addDays(state.statsFrom, 6))}</h2>
         <div class="chips">
-          <span class="chip chip--sea">${ICON('dot-arrival', 6)}${arrivals} ${plural(arrivals, 'przyjazd', 'przyjazdy', 'przyjazdów')} dziś</span>
-          <span class="chip chip--amber">${ICON('dot-departure', 6)}${departures} ${plural(departures, 'wyjazd', 'wyjazdy', 'wyjazdów')} dziś</span>
+          <span class="chip chip--sea">${ICON('dot-arrival', 6)}${arrivals} ${plural(arrivals, 'przyjazd', 'przyjazdy', 'przyjazdów')} ${dayWord}</span>
+          <span class="chip chip--amber">${ICON('dot-departure', 6)}${departures} ${plural(departures, 'wyjazd', 'wyjazdy', 'wyjazdów')} ${dayWord}</span>
           <span class="chip chip--green">${ICON('dot-free', 6)}${free} ${plural(free, 'pokój wolny', 'pokoje wolne', 'pokoi wolnych')} na noc</span>
         </div>
       </div>
@@ -330,7 +354,7 @@ const FILTERS = {
   range: { label: 'Daty', options: [['all', 'Wszystkie'], [1, 'Dziś'], [7, 'Najbliższe 7 dni'], [14, 'Najbliższe 14 dni'], ['custom', 'Wybierz zakres…']] },
   payment: { label: 'Płatność', options: [['all', 'Wszystkie'], ['Karta', 'Karta'], ['Gotówka', 'Gotówka'], ['Faktura', 'Faktura'], ['Przelew', 'Przelew']] },
   floor: { label: 'Piętro', options: [['all', 'Wszystkie'], ['1', 'Piętro 1'], ['2', 'Piętro 2']] },
-  type: { label: 'Typ pokoju', options: [['all', 'Wszystkie'], ['1-os.', '1-os.'], ['2-os.', '2-os.'], ['2-os.+', '2-os.+'], ['Studio', 'Studio']] },
+  type: { label: 'Typ pokoju', options: [['all', 'Wszystkie'], ['1-os.', '1-os.'], ['2-os.', '2-os.'], ['4-os.', '4-os.'], ['Studio', 'Studio']] },
 };
 function filterValueLabel(key) {
   const v = state.filters[key];
@@ -364,7 +388,7 @@ function renderReservations() {
       : st.action === 'checkout'
         ? `<button class="btn btn--soft" data-act="checkout" data-id="${r.id}">${ICON('logout', 16)}Wymelduj</button>`
         : '';
-    return `<div class="res${open ? ' is-open' : ''}" data-res="${r.id}">
+    return `<div class="res${open ? ' is-open' : ''}" data-res="${r.id}" data-key="${r.id}">
       <div class="trow res-grid">
         <div class="cell cell--row cell--guest">
           <button class="expand" data-act="toggle" data-id="${r.id}" aria-expanded="${open}" aria-label="${open ? 'Zwiń' : 'Rozwiń'} szczegóły ${esc(r.name)}">
@@ -430,25 +454,24 @@ function renderDetails(r) {
          <button class="btn btn--outline" type="button" data-act="cancel-note">Anuluj</button>
        </form>`
     : `<button class="add-note" data-act="add-note" data-id="${r.id}">${ICON('plus-green', 14)}Dodaj uwagę</button>`;
-  return `<div class="details">
+  // same column grid as the row above: contact under „Gość”, stay facts under „Pokój”, notes under „Status pokoju”
+  return `<div class="details res-grid">
     <div class="details__section details__section--contact">
       <span class="eyebrow">Kontakt</span>
-      <div class="contact-line">${ICON('phone-sm', 16)}<span class="val">${esc(r.phone)}</span>
-        <a class="act" href="tel:${r.phone.replace(/\s/g, '')}">Zadzwoń</a></div>
-      <div class="contact-line">${ICON('mail', 16)}<span class="val">${esc(r.email)}</span>
-        <a class="act" href="mailto:${esc(r.email)}">Napisz</a></div>
+      <a class="contact-line" href="tel:${r.phone.replace(/\s/g, '')}" title="Zadzwoń">${ICON('phone-sm', 16)}<span class="val">${esc(r.phone)}</span></a>
+      <a class="contact-line" href="mailto:${esc(r.email)}" title="Napisz e-mail">${ICON('mail', 16)}<span class="val">${esc(r.email).replace('@', '<wbr>@')}</span></a>
     </div>
     <div class="details__section details__section--stay">
-      <span class="eyebrow">O pobycie</span>
       <dl class="facts">
         ${[
-          ['Cel pobytu', PURPOSE[r.purpose]],
-          ['Goście', partyLabel(r)],
-          ['Przyjazd ok.', r.eta],
-          ['Łóżka', r.bed],
-          ['Pochodzenie', [r.country, r.city].filter(Boolean).join(' · ') + (r.age ? ` · ${r.age} lat` : '')],
-          ['Źródło', r.source],
-        ].filter(([, v]) => v).map(([k, v]) => `<div class="fact"><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}
+          // [label, value, column under: a = „Pokój”, b = „Status zakwaterowania”, c = „Status pokoju”]
+          ['Cel pobytu', PURPOSE[r.purpose], 'a'],
+          ['Goście', partyLabel(r), 'a'],
+          ['Przyjazd ok.', r.eta, 'b'],
+          ['Łóżka', r.bed, 'b'],
+          ['Pochodzenie', [r.country, r.city].filter(Boolean).join(' · ') + (r.age ? ` · ${r.age} lat` : ''), 'c'],
+          ['Źródło', r.source, 'c'],
+        ].map(([k, v, col]) => `<div class="fact fact--${col}"><dt>${k}</dt><dd>${esc(v || '—')}</dd></div>`).join('')}
       </dl>
     </div>
     <div class="details__section details__section--notes">
@@ -473,7 +496,7 @@ function renderAvailability() {
   const range = valid ? `${dm(from)} → ${dm(to)}` : '';
 
   const chipHtml = c => `<span class="chip chip--${c.tone}">${c.dot ? ICON(c.dot, 6) : ''}${c.label}</span>`;
-  const matchRow = m => `<div class="trow avail-grid avail-row avail-row--match">
+  const matchRow = m => `<div class="trow avail-grid avail-row avail-row--match" data-key="room-${m.room.no}">
       <div class="cell"><span class="primary primary--lg">${m.room.no}</span><span class="secondary">Piętro ${m.room.floor}</span></div>
       <div class="cell"><span class="primary primary--md">${m.room.type}</span><span class="secondary">${m.room.capLabel}</span></div>
       <div class="cell" style="gap:6px"><div class="chips">${m.chips.map(chipHtml).join('')}</div><span class="note">${esc(m.note)}</span></div>
@@ -484,7 +507,7 @@ function renderAvailability() {
         <button class="btn btn--primary" data-act="book" data-room="${m.room.no}">Zarezerwuj pokój ${m.room.no}${ICON('arrow-right', 16)}</button>
       </div>
     </div>`;
-  const offRow = o => `<div class="trow avail-grid avail-row avail-row--off">
+  const offRow = o => `<div class="trow avail-grid avail-row avail-row--off" data-key="room-${o.room.no}">
       <div class="cell"><span class="room-no">${o.room.no}</span></div>
       <div class="cell"><span class="primary">${o.room.type}</span><span class="secondary">${o.room.capLabel}</span></div>
       <div class="cell" style="gap:6px"><div class="chips" style="gap:6px">${o.chips.map(chipHtml).join('')}</div><span class="note">${esc(o.note)}</span></div>
@@ -531,38 +554,92 @@ function renderAvailability() {
         <div class="cell">Cena / noc</div><div class="cell">Suma za pobyt</div><div class="cell"></div>
       </div>
       ${res ? res.matches.map(matchRow).join('') : ''}
-      ${res && res.others.length ? `<div class="divider-row">Niedostępne w terminie ${range}</div>${res.others.map(offRow).join('')}` : ''}
+      ${res && res.others.length ? `<div class="divider-row" data-key="divider">Niedostępne w terminie ${range}</div>${res.others.map(offRow).join('')}` : ''}
     </div>`;
 }
 
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const MOVE_EASE = 'cubic-bezier(.2, .7, .3, 1)';
+
+// Positions of keyed rows (rooms, reservations, divider) before a re-render
+function rowPositions(card) {
+  const pos = new Map();
+  card.querySelectorAll('[data-key]').forEach(el => pos.set(el.dataset.key, el.getBoundingClientRect().top));
+  return pos;
+}
+
+// FLIP: rows that moved slide from their old spot, rows that appeared fade in
+function animateRows(card, before) {
+  card.querySelectorAll('[data-key]').forEach(el => {
+    const was = before.get(el.dataset.key);
+    if (was === undefined) {
+      el.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 240, easing: 'ease-out' });
+      return;
+    }
+    const dy = was - el.getBoundingClientRect().top;
+    if (Math.abs(dy) > 1) {
+      el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 320, easing: MOVE_EASE });
+    }
+  });
+}
+
+// A control that gets re-created by render() (stepper +/−, mode tabs…) — so focus can be put back on it
+function focusKey(el) {
+  if (!el || !card.contains(el) || el === card) return null;
+  if (el.id) return `#${el.id}`;
+  const attrs = ['data-act', 'data-step', 'data-mode', 'data-filter', 'data-id', 'data-room'].filter(a => el.hasAttribute(a));
+  return attrs.length ? attrs.map(a => `[${a}="${el.getAttribute(a)}"]`).join('') : null;
+}
+
+// Height of the card's content without letting the card itself resize (children are plain blocks)
+const contentHeight = el => [...el.children].reduce((h, c) => h + c.offsetHeight, 0) + el.offsetHeight - el.clientHeight;
+
 let renderedMode = state.mode;
-let cardHeightTimer;
+let cardHeightTimer, viewEnterTimer;
 function render() {
   renderHeader();
-  const card = document.getElementById('card');
   const switched = renderedMode !== state.mode;
   renderedMode = state.mode;
-  const searchFocused = document.activeElement && document.activeElement.id === 'search';
-  const caret = searchFocused ? document.activeElement.selectionStart : null;
-  // lock the old height, swap content, then animate to the new height
-  const prevH = switched ? card.offsetHeight : 0;
+  const active = document.activeElement;
+  const refocus = focusKey(active);
+  const caret = active && active.id === 'search' ? active.selectionStart : null;
+  const animate = !reduceMotion() && card.childElementCount > 0; // not on first paint
+  const prevH = card.offsetHeight;
+  const before = animate && !switched ? rowPositions(card) : null;
+
+  // Lock the current height *before* swapping content: the page never shrinks for a frame,
+  // so a scrolled page can't get its scroll position clamped (that was a visible jump).
+  clearTimeout(cardHeightTimer);
+  if (animate) card.style.height = `${prevH}px`;
+
   card.innerHTML = state.mode === 'reservations' ? renderReservations() : renderAvailability();
+
   if (switched) {
+    // one-shot entrance animation; the class must not linger or every later render replays it
+    clearTimeout(viewEnterTimer);
     card.classList.remove('view-enter');
     void card.offsetWidth;
     card.classList.add('view-enter');
-    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      const nextH = card.offsetHeight;
-      card.style.height = prevH + 'px';
-      requestAnimationFrame(() => { card.style.height = nextH + 'px'; });
-      clearTimeout(cardHeightTimer);
-      cardHeightTimer = setTimeout(() => { card.style.height = ''; }, 220);
+    viewEnterTimer = setTimeout(() => card.classList.remove('view-enter'), 260);
+  } else if (before) {
+    animateRows(card, before);
+  }
+
+  if (animate) {
+    const nextH = contentHeight(card);
+    if (Math.abs(nextH - prevH) > 1) {
+      card.style.height = `${nextH}px`; // CSS transition runs from the locked height
+      cardHeightTimer = setTimeout(() => { card.style.height = ''; }, 340);
+    } else {
+      card.style.height = '';
     }
   }
-  if (searchFocused) {
-    const s = document.getElementById('search');
-    s.focus();
-    s.setSelectionRange(caret, caret);
+
+  const again = refocus && card.querySelector(refocus);
+  if (again && !again.disabled) {
+    again.focus({ preventScroll: true });
+    if (caret !== null) again.setSelectionRange(caret, caret);
   }
   const noteInput = card.querySelector('.note-form input');
   if (noteInput) noteInput.focus();
@@ -959,6 +1036,7 @@ const syncHash = () => history.replaceState(null, '', state.mode === 'availabili
 // Changing the viewed day also moves the availability search to arrive that day (same stay length)
 function setDay(d) {
   state.today = d;
+  state.statsFrom = mondayOf(d);
   const len = Math.max(1, diffDays(state.avail.from, state.avail.to));
   const moved = { from: d, to: addDays(d, len) };
   Object.assign(state.avail, moved);
