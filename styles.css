@@ -14,6 +14,10 @@
   --accent: #2f6b4f;
   --accent-soft: #e6efe8;
   --match-row: #f0f5ee;
+  /* table rows: a light warm sand, shared by hover and the expanded row so opening one doesn't flash */
+  --row-hover: #fdf9f2;
+  --row-open: var(--row-hover);
+  --row-bar: #d6b98a;
 
   --sea-bg: #e3eeef;     --sea-fg: #245b5f;
   --amber-bg: #fbeedd;   --amber-fg: #92470c;
@@ -229,6 +233,8 @@ img { display: block; }
 .btn--primary { padding: 9px 14px; background: var(--accent); color: #fff; }
 .btn--primary:hover { background: #275c43; }
 .btn--lg { padding: 11px 18px; }
+.btn--danger { padding: 9px 14px; background: var(--red-fg); color: #fff; }
+.btn--danger:hover { background: #8a2b17; }
 
 /* Filters */
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -284,9 +290,11 @@ img { display: block; }
 .res { border-bottom: 1px solid var(--border); }
 .res:last-child { border-bottom: 0; }
 .res .trow { padding: 14px 0; min-height: 76px; }
-.res:hover > .trow { background: #fcfbf8; }
-.res.is-open, .res.is-open > .trow { background: var(--subtle); }
-.res.is-open > .trow { min-height: 71px; }
+.res > .trow { transition: background-color .12s; }
+.res:hover > .trow { background: var(--row-hover); }
+/* expanded reservation: same tint as hover + a bar on the left */
+.res.is-open, .res.is-open > .trow { background: var(--row-open); }
+.res.is-open { box-shadow: inset 3px 0 0 var(--row-bar); }
 
 .expand {
   width: 24px; height: 24px; flex-shrink: 0; border-radius: var(--r-sm);
@@ -294,7 +302,23 @@ img { display: block; }
 }
 .expand:hover { background: #e4e0d7; }
 .expand[aria-expanded="true"] { background: var(--accent-soft); }
-.expand[aria-expanded="true"] img { transform: scaleY(-1); }
+.expand { transition: background-color .2s; }
+.expand img { transition: transform .28s cubic-bezier(.2, .7, .3, 1); }
+.expand[aria-expanded="true"] img { transform: rotate(180deg); }
+
+/* Details stay in the DOM; 0fr → 1fr animates to the content's natural height */
+.details-wrap {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows .28s cubic-bezier(.2, .7, .3, 1);
+}
+.res.is-open > .details-wrap { grid-template-rows: 1fr; }
+.details-clip { min-height: 0; overflow: hidden; }
+.details-clip > .details { opacity: 0; transition: opacity .2s ease; }
+.res.is-open .details-clip > .details { opacity: 1; transition-delay: .06s; }
+.res { transition: box-shadow .28s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .details-wrap, .details-clip > .details, .expand img, .res { transition: none; }
+}
 .guest-name { display: flex; align-items: center; gap: 6px; }
 
 .actions { display: flex; flex-direction: row; align-items: center; gap: 8px; }
@@ -325,12 +349,16 @@ img { display: block; }
 
 /* Expanded details */
 .details {
-  display: flex; flex-wrap: wrap; gap: 24px 40px; align-items: flex-start;
-  padding: 4px 24px 24px 56px;
+  display: flex; flex-wrap: wrap; gap: 16px 48px; align-items: flex-start;
+  padding: 0 24px 16px 56px;
 }
-.details__section { display: flex; flex-direction: column; gap: 12px; }
-.details__section--contact { width: 300px; flex-shrink: 0; }
-.details__section--booking { width: 360px; flex-shrink: 0; }
+.details__section { display: flex; flex-direction: column; gap: 8px; }
+.details__section--contact { width: 270px; flex-shrink: 0; }
+.details__section--stay { flex: 0 1 auto; }
+.facts { display: grid; grid-template-columns: repeat(3, auto); gap: 8px 32px; margin: 0; }
+.fact { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fact dt { font-size: 12px; color: var(--text-3); }
+.fact dd { margin: 0; font-size: 14px; font-weight: 500; white-space: nowrap; }
 .details__section--notes { flex: 1 1 280px; }
 .eyebrow { font-size: 12px; font-weight: 600; color: var(--text-3); letter-spacing: .72px; text-transform: uppercase; }
 .contact-line { display: flex; align-items: center; gap: 10px; }
@@ -342,7 +370,7 @@ img { display: block; }
 .kv dd { margin: 0; font-weight: 500; white-space: nowrap; }
 .notes-box {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
-  padding: 10px; min-height: 66px; font-size: 13px; line-height: normal; white-space: pre-line;
+  padding: 8px 10px; font-size: 13px; line-height: 1.4; white-space: pre-line;
 }
 .notes-box--empty { color: var(--text-3); }
 .note-form { display: flex; gap: 8px; }
@@ -459,10 +487,15 @@ button.field__box { text-align: left; }
 .modal-backdrop[hidden] { display: none; }
 .modal {
   width: 480px; max-width: 100%;
+  max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px);
+  display: flex; flex-direction: column; overflow: hidden;
   background: var(--surface); border-radius: var(--r-lg); border: 1px solid var(--border);
   box-shadow: 0 24px 60px rgba(28, 25, 23, .2);
 }
-.modal__head { padding: 20px 24px 0; }
+.modal__head { padding: 20px 24px 0; flex-shrink: 0; }
+/* long forms scroll inside the dialog, so the fields and buttons at the bottom stay reachable */
+.modal .modal__body { overflow-y: auto; min-height: 0; }
+.modal .modal__foot { flex-shrink: 0; padding-top: 16px; border-top: 1px solid var(--border); }
 .modal__title { margin: 0; font-size: 18px; font-weight: 700; }
 .modal__sub { margin: 4px 0 0; color: var(--text-2); font-size: 13px; }
 .modal__body { padding: 16px 24px; display: flex; flex-direction: column; gap: 14px; }
@@ -476,6 +509,10 @@ button.field__box { text-align: left; }
   border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); outline: 0;
 }
 .input:focus { border-color: var(--accent); }
+.input--area { height: auto; min-height: 72px; padding: 10px 12px; resize: vertical; line-height: 1.4; }
+.field__optional { color: var(--text-3); font-weight: 400; }
+.modal--confirm { width: 420px; }
+.modal--confirm .modal__foot { padding-top: 20px; border-top: 0; }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 /* ===== Toast ===== */
@@ -537,7 +574,9 @@ button.field__box { text-align: left; }
   .stepper { justify-content: space-between; }
 
   .details { padding: 4px 16px 20px; }
-  .details__section--contact, .details__section--booking { width: 100%; }
+  .details__section--contact, .details__section--stay { width: 100%; }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fact dd { white-space: normal; }
   .kv dd { white-space: normal; }
 
   .modal-backdrop { padding: 12px; }

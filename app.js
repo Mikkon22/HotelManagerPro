@@ -21,17 +21,22 @@ const roomByNo = Object.fromEntries(ROOMS.map(r => [r.no, r]));
 let reservations = [
   { id: 'R-0002', name: 'Jan Kowalski', room: '102', from: '2024-12-28', to: '2025-01-02', price: 250, payment: 'Karta', guests: 2,
     phone: '+48 501 234 567', email: 'j.kowalski@example.com', city: 'Warszawa', age: 45, cleaning: 'daily',
-    notes: 'Gość życzy sobie śniadanie o 7:30 do pokoju,\nGość poprosił także o rezerwację miesjca parkingowego A5.' },
+    purpose: 'leisure', children: 0, eta: '15:00–16:00', source: 'Booking.com', country: 'Polska', bed: 'Łóżko małżeńskie',
+    notes: 'Gość życzy sobie śniadanie o 7:30 do pokoju,\nGość poprosił także o rezerwację miejsca parkingowego A5.' },
   { id: 'R-0003', name: 'Anna Nowak', room: '103', from: '2024-12-26', to: '2024-12-28', price: 280, payment: 'Gotówka', guests: 2,
-    phone: '+48 602 118 940', email: 'anna.nowak@example.com', city: 'Kraków', age: 38, cleaning: 'daily', notes: '' },
+    phone: '+48 602 118 940', email: 'anna.nowak@example.com', city: 'Kraków', age: 38, cleaning: 'daily', notes: '',
+    purpose: 'business', children: 0, eta: '18:00–19:00', source: 'Strona hotelu', country: 'Polska', bed: 'Dwa osobne łóżka' },
   { id: 'R-0004', name: 'Maria Wiśniewska', room: '104', from: '2024-12-27', to: '2024-12-30', price: 180, payment: 'Faktura', guests: 1,
     phone: '+48 663 410 225', email: 'm.wisniewska@example.com', city: 'Poznań', age: 52, cleaning: 'daily',
+    purpose: 'business', children: 0, eta: '20:00–21:00', source: 'Telefon', country: 'Polska', bed: '',
     notes: 'Faktura na firmę: Wiśniewska Consulting, NIP 778-123-45-67.' },
   { id: 'R-0006', name: 'Piotr Zieliński', room: '201', from: '2024-12-25', to: '2025-01-03', price: 250, payment: 'Przelew', guests: 2, vip: true,
     phone: '+48 790 300 812', email: 'piotr.zielinski@example.com', city: 'Gdańsk', age: 61, cleaning: 'none',
+    purpose: 'leisure', children: 0, eta: '14:00–15:00', source: 'Bezpośrednio · stały gość', country: 'Polska', bed: 'Łóżko małżeńskie',
     notes: 'Stały gość. Prosi o brak sprzątania – ręczniki wymieniać na życzenie.' },
   { id: 'R-0008', name: 'Rodzina Schmidt', room: '203', from: '2024-12-27', to: '2024-12-29', price: 320, payment: 'Karta', guests: 4,
     phone: '+49 151 2345 6789', email: 'schmidt.family@example.de', city: 'Berlin', age: 44, cleaning: 'daily',
+    purpose: 'leisure', children: 2, eta: '16:00–17:00', source: 'Booking.com', country: 'Niemcy', bed: 'Łóżko małżeńskie + łóżeczko',
     notes: 'Dostawka dla dziecka (łóżeczko).' },
 ];
 const checkedIn = new Set();
@@ -49,7 +54,6 @@ const state = {
   search: '',
   filters: { range: 'all', payment: 'all', floor: 'all', type: 'all' }, // range: 'all' | days from today | { from, to }
   avail: { from: '2024-12-28', to: '2024-12-30', guests: 2 }, // criteria being edited in the form
-  availQuery: null, // criteria of the last „Sprawdź dostępność”; results are computed only from this
   statsOpen: false,
 };
 
@@ -76,6 +80,13 @@ const plural = (n, one, few, many) => {
   return u >= 2 && u <= 4 && !(t >= 12 && t <= 14) ? few : many;
 };
 const nightsLabel = n => `${n} ${plural(n, 'noc', 'noce', 'nocy')}`;
+const PURPOSE = { leisure: 'Wypoczynkowy', business: 'Służbowy' };
+const ETA_SLOTS = ['12:00–13:00', '13:00–14:00', '14:00–15:00', '15:00–16:00', '16:00–17:00', '17:00–18:00',
+  '18:00–19:00', '19:00–20:00', '20:00–21:00', '21:00–22:00', '22:00–23:00', 'Po 23:00'];
+const partyLabel = r => {
+  const kids = r.children || 0, adults = r.guests - kids;
+  return `${adults} ${plural(adults, 'dorosły', 'dorosłych', 'dorosłych')}${kids ? `, ${kids} ${plural(kids, 'dziecko', 'dzieci', 'dzieci')}` : ''}`;
+};
 const zl = n => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' zł';
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const shortName = name => name.startsWith('Rodzina ') ? name : name.replace(/^(\S)\S*\s+/, '$1. ');
@@ -152,7 +163,7 @@ function spans(nights) {
 const spanText = list => spans(list).map(s => s.start === s.end ? dm(s.start) : `${dm(s.start)}–${dm(s.end)}`).join(', ');
 
 function evaluateAvailability() {
-  const { from: A, to: Dp, guests: g } = state.availQuery;
+  const { from: A, to: Dp, guests: g } = state.avail;
   const nights = [];
   for (let n = A; n < Dp; n = addDays(n, 1)) nights.push(n);
   const q = state.search.trim().toLowerCase();
@@ -200,7 +211,10 @@ function evaluateAvailability() {
       note: `Wolny cały termin, ale nie pomieści ${g} ${plural(g, 'osoby', 'osób', 'osób')}` };
   });
 
-  const matches = rows.filter(r => r.cat === 'match');
+  // Best fit first: smallest room that still fits the party, then cheapest. A single guest gets
+  // the 1-os. room before a family room, which stays free for a group that actually needs it.
+  const matches = rows.filter(r => r.cat === 'match').sort((a, b) =>
+    (a.room.cap - g) - (b.room.cap - g) || a.room.price - b.room.price || a.room.no.localeCompare(b.room.no));
   const others = rows.filter(r => r.cat !== 'match').sort((a, b) =>
     a.rank - b.rank || (a.cat === 'small' ? b.room.no.localeCompare(a.room.no) : a.room.no.localeCompare(b.room.no)));
   return { matches, others, nights: nights.length };
@@ -328,7 +342,8 @@ function filterValueLabel(key) {
 }
 function filterBtn(key) {
   const set = state.filters[key] !== 'all';
-  return `<button class="filter${set ? ' is-set' : ''}" data-filter="${key}" aria-haspopup="menu">
+  return `<button class="filter${set ? ' is-set' : ''}" data-filter="${key}" aria-haspopup="menu"
+    aria-label="Filtr ${FILTERS[key].label}: ${filterValueLabel(key)}">
     <span class="filter__label">${FILTERS[key].label}:</span>
     <span class="filter__value">${filterValueLabel(key)}</span>
     ${ICON('chev-filter', 14)}
@@ -353,7 +368,7 @@ function renderReservations() {
       <div class="trow res-grid">
         <div class="cell cell--row cell--guest">
           <button class="expand" data-act="toggle" data-id="${r.id}" aria-expanded="${open}" aria-label="${open ? 'Zwiń' : 'Rozwiń'} szczegóły ${esc(r.name)}">
-            ${open ? ICON('chev-up', 16) : ICON('chev-down', 16)}
+            ${ICON('chev-down', 16)}
           </button>
           <div class="cell" style="padding:0">
             <div class="guest-name"><span class="primary">${esc(r.name)}</span>${r.vip ? '<span class="chip chip--plum">VIP</span>' : ''}</div>
@@ -374,7 +389,7 @@ function renderReservations() {
           ${mainAction}
         </div>
       </div>
-      ${open ? renderDetails(r, room, nights) : ''}
+      <div class="details-wrap"${open ? '' : ' inert'}><div class="details-clip">${renderDetails(r)}</div></div>
     </div>`;
   }).join('');
 
@@ -382,9 +397,12 @@ function renderReservations() {
     <div class="toolbar toolbar--res">
       <div class="toolbar__row">
         <div class="toolbar__group">${searchBox()}${modeSwitch()}</div>
-        <button class="btn btn--outline" id="exportBtn" aria-haspopup="menu">
-          ${ICON('download', 16)}Eksport${ICON('chev-export', 16)}
-        </button>
+        <div class="toolbar__group">
+          <button class="btn btn--outline" id="exportBtn" aria-haspopup="menu">
+            ${ICON('download', 16)}Eksport${ICON('chev-export', 16)}
+          </button>
+          <button class="btn btn--primary" id="newReservation">${ICON('plus-white', 16)}Nowa rezerwacja</button>
+        </div>
       </div>
       <div class="filters">
         ${filterBtn('range')}${filterBtn('payment')}${filterBtn('floor')}${filterBtn('type')}
@@ -401,7 +419,7 @@ function renderReservations() {
     </div>`;
 }
 
-function renderDetails(r, room, nights) {
+function renderDetails(r) {
   const notes = r.notes
     ? `<div class="notes-box">${esc(r.notes)}</div>`
     : `<div class="notes-box notes-box--empty">Brak uwag.</div>`;
@@ -419,16 +437,20 @@ function renderDetails(r, room, nights) {
         <a class="act" href="tel:${r.phone.replace(/\s/g, '')}">Zadzwoń</a></div>
       <div class="contact-line">${ICON('mail', 16)}<span class="val">${esc(r.email)}</span>
         <a class="act" href="mailto:${esc(r.email)}">Napisz</a></div>
-      ${r.city ? `<div class="contact-line">${ICON('pin', 16)}<span class="val">${esc(r.city)}</span>
-        ${r.age ? `<span class="secondary">${r.age} lat</span>` : ''}</div>` : ''}
     </div>
-    <dl class="details__section details__section--booking" style="margin:0">
-      <span class="eyebrow">Rezerwacja</span>
-      <div class="kv"><dt>Numer</dt><dd>${r.id}</dd></div>
-      <div class="kv"><dt>Pokój</dt><dd>${room.no} · Piętro ${room.floor} · ${room.type}</dd></div>
-      <div class="kv"><dt>Termin</dt><dd>${DAY_SHORT[dow(r.from)]}. ${dm(r.from)} → ${DAY_SHORT[dow(r.to)]}. ${dm(r.to)} · ${nightsLabel(nights)}</dd></div>
-      <div class="kv"><dt>Płatność</dt><dd>${r.payment} · ${zl(nights * r.price)} (${nights} × ${zl(r.price)})</dd></div>
-    </dl>
+    <div class="details__section details__section--stay">
+      <span class="eyebrow">O pobycie</span>
+      <dl class="facts">
+        ${[
+          ['Cel pobytu', PURPOSE[r.purpose]],
+          ['Goście', partyLabel(r)],
+          ['Przyjazd ok.', r.eta],
+          ['Łóżka', r.bed],
+          ['Pochodzenie', [r.country, r.city].filter(Boolean).join(' · ') + (r.age ? ` · ${r.age} lat` : '')],
+          ['Źródło', r.source],
+        ].filter(([, v]) => v).map(([k, v]) => `<div class="fact"><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}
+      </dl>
+    </div>
     <div class="details__section details__section--notes">
       <span class="eyebrow">Uwagi</span>
       ${notes}
@@ -441,17 +463,14 @@ function renderAvailability() {
   const { from, to, guests } = state.avail;
   const nights = diffDays(from, to);
   const valid = nights > 0;
-  const query = state.availQuery;
-  const res = query ? evaluateAvailability() : null;
+  const res = valid ? evaluateAvailability() : null;
   const count = res ? res.matches.length : 0;
-  const dirty = query && (query.from !== from || query.to !== to || query.guests !== guests);
-  const summary = !res
-    ? `<span class="chip chip--neutral">Ustaw termin i liczbę gości, a potem kliknij „Sprawdź dostępność”</span>`
-    : (count
+  const summary = !valid
+    ? `<span class="chip chip--red">Data wyjazdu musi być po dacie przyjazdu</span>`
+    : count
       ? `<span class="chip chip--olive">${ICON('dot-match', 6)}${count} ${plural(count, 'pokój pasuje', 'pokoje pasują', 'pokoi pasuje')}</span>`
-      : `<span class="chip chip--red">Brak wolnych pokoi w tym terminie</span>`)
-      + (dirty ? ` <span class="chip chip--amber">Kryteria zmienione – wyniki dotyczą ${dm(query.from)} → ${dm(query.to)}, ${query.guests} os.</span>` : '');
-  const range = query ? `${dm(query.from)} → ${dm(query.to)}` : '';
+      : `<span class="chip chip--red">Brak wolnych pokoi w tym terminie</span>`;
+  const range = valid ? `${dm(from)} → ${dm(to)}` : '';
 
   const chipHtml = c => `<span class="chip chip--${c.tone}">${c.dot ? ICON(c.dot, 6) : ''}${c.label}</span>`;
   const matchRow = m => `<div class="trow avail-grid avail-row avail-row--match">
@@ -481,7 +500,7 @@ function renderAvailability() {
       <div class="toolbar__row">
         <div class="toolbar__group">${searchBox()}${modeSwitch()}</div>
       </div>
-      <form class="criteria" id="availForm">
+      <div class="criteria">
         <div class="field">
           <label class="field__label" for="availFrom">Przyjazd</label>
           <button type="button" class="field__box" id="availFrom" data-cal="start" aria-haspopup="dialog" aria-expanded="false">
@@ -503,8 +522,7 @@ function renderAvailability() {
             <button type="button" class="icon-btn icon-btn--sm" data-act="guests" data-step="1" aria-label="Więcej gości" ${guests >= 6 ? 'disabled' : ''}>${ICON('plus', 16)}</button>
           </div>
         </div>
-        <button type="submit" class="btn btn--primary btn--lg">${ICON('search-white', 16)}Sprawdź dostępność</button>
-      </form>
+      </div>
       <div class="chips">${summary}</div>
     </div>
     <div class="table" role="table" aria-label="Dostępność pokoi" id="availResults">
@@ -512,7 +530,7 @@ function renderAvailability() {
         <div class="cell">Pokój</div><div class="cell">Typ i pojemność</div><div class="cell">Dostępność ${range}</div>
         <div class="cell">Cena / noc</div><div class="cell">Suma za pobyt</div><div class="cell"></div>
       </div>
-      ${res ? res.matches.map(matchRow).join('') : '<div class="empty">Wyniki pojawią się po kliknięciu „Sprawdź dostępność”.</div>'}
+      ${res ? res.matches.map(matchRow).join('') : ''}
       ${res && res.others.length ? `<div class="divider-row">Niedostępne w terminie ${range}</div>${res.others.map(offRow).join('')}` : ''}
     </div>`;
 }
@@ -791,11 +809,27 @@ function openModal({ title, sub, summary, stay, values = {}, submitLabel, onSubm
       <div class="row-2">
         <div class="field"><label class="field__label" for="mPhone">Telefon</label>
           <input class="input" id="mPhone" name="phone" type="tel" value="${esc(values.phone || '')}"></div>
+        <div class="field"><label class="field__label" for="mMail">E-mail</label>
+          <input class="input" id="mMail" name="email" type="email" value="${esc(values.email || '')}"></div>
+      </div>
+      <div class="row-2">
+        <div class="field"><label class="field__label" for="mPurpose">Cel pobytu</label>
+          <select class="input" id="mPurpose" name="purpose">${Object.entries(PURPOSE).map(([v, l]) =>
+            `<option value="${v}"${v === (values.purpose || 'leisure') ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
         <div class="field"><label class="field__label" for="mPay">Płatność</label>
           <select class="input" id="mPay" name="payment">${PAYMENTS.map(p => `<option${p === values.payment ? ' selected' : ''}>${p}</option>`).join('')}</select></div>
       </div>
-      <div class="field"><label class="field__label" for="mMail">E-mail</label>
-        <input class="input" id="mMail" name="email" type="email" value="${esc(values.email || '')}"></div>
+      <div class="row-2">
+        <div class="field"><label class="field__label" for="mEta">Godzina przyjazdu</label>
+          <select class="input" id="mEta" name="eta"><option value="">Nie wiadomo</option>${ETA_SLOTS.map(t =>
+            `<option${t === values.eta ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
+        <div class="field"><label class="field__label" for="mKids">W tym dzieci</label>
+          <select class="input" id="mKids" name="children"${(values.guests || 1) < 2 ? ' disabled' : ''}>${[...Array(values.guests || 1)].map((_, n) =>
+            `<option value="${n}"${n === (values.children || 0) ? ' selected' : ''}>${n}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label class="field__label" for="mNotes">Uwagi <span class="field__optional">(opcjonalnie)</span></label>
+        <textarea class="input input--area" id="mNotes" name="notes" rows="3"
+          placeholder="np. łóżeczko dla dziecka, faktura na firmę, miejsce parkingowe">${esc(values.notes || '')}</textarea></div>
     </div>
     <div class="modal__foot">
       <button type="button" class="btn btn--outline" data-close>Anuluj</button>
@@ -828,6 +862,20 @@ function openModal({ title, sub, summary, stay, values = {}, submitLabel, onSubm
   modalEl.querySelector('[data-close]').onclick = closeModal;
 }
 function closeModal() { closeCalendar(); modalEl.hidden = true; modalEl.innerHTML = ''; }
+
+function confirmDialog({ title, text, confirmLabel, onConfirm }) {
+  modalEl.innerHTML = `<div class="modal modal--confirm" role="alertdialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalText">
+    <div class="modal__head"><h2 class="modal__title" id="modalTitle">${title}</h2><p class="modal__sub" id="modalText">${text}</p></div>
+    <div class="modal__foot">
+      <button type="button" class="btn btn--outline" data-close>Anuluj</button>
+      <button type="button" class="btn btn--danger" data-confirm>${confirmLabel}</button>
+    </div>
+  </div>`;
+  modalEl.hidden = false;
+  modalEl.querySelector('[data-close]').onclick = closeModal;
+  modalEl.querySelector('[data-confirm]').onclick = () => { closeModal(); onConfirm(); };
+  modalEl.querySelector('[data-close]').focus(); // the safe choice is the default
+}
 modalEl.addEventListener('mousedown', e => { if (e.target === modalEl) closeModal(); });
 
 function nextId() {
@@ -837,11 +885,11 @@ function nextId() {
 
 function bookRoom(roomNo) {
   const room = roomByNo[roomNo];
-  const { guests } = state.availQuery;
+  const { guests } = state.avail;
   openModal({
     title: `Rezerwacja pokoju ${room.no}`,
     sub: 'Pokój, termin i cena są uzupełnione – termin możesz zmienić w kalendarzu.',
-    stay: { from: state.availQuery.from, to: state.availQuery.to, room: room.no, min: HOTEL_TODAY },
+    stay: { from: state.avail.from, to: state.avail.to, room: room.no, min: HOTEL_TODAY },
     summary: ({ from, to }) => {
       const n = diffDays(from, to);
       return [
@@ -850,15 +898,16 @@ function bookRoom(roomNo) {
         ['Cena', `${zl(room.price * n)} (${n} × ${zl(room.price)})`],
       ];
     },
-    values: { payment: 'Karta' },
+    values: { payment: 'Karta', guests },
     submitLabel: 'Zarezerwuj',
     onSubmit: (data, { from, to }) => {
       const id = nextId();
       reservations.push({ id, name: data.name.trim(), room: room.no, from, to, price: room.price, payment: data.payment,
-        guests, phone: data.phone.trim() || '—', email: data.email.trim() || '—', city: '', age: null, cleaning: 'daily', notes: '' });
+        guests, phone: data.phone.trim() || '—', email: data.email.trim() || '—', city: '', age: null, cleaning: 'daily', notes: data.notes.trim(),
+        purpose: data.purpose, eta: data.eta, children: Number(data.children || 0), source: 'Recepcja', country: '', bed: '' });
       render();
       toast(`Utworzono rezerwację ${id} · pokój ${room.no}`, { label: 'Pokaż', run: () => {
-        state.mode = 'reservations'; state.today = from; state.expanded.add(id); syncHash(); render();
+        state.mode = 'reservations'; setDay(from); state.expanded.add(id); syncHash(); render();
       } });
     },
   });
@@ -878,7 +927,8 @@ function editReservation(id) {
     values: r,
     submitLabel: 'Zapisz zmiany',
     onSubmit: (data, { from, to }) => {
-      Object.assign(r, { name: data.name.trim(), phone: data.phone.trim(), email: data.email.trim(), payment: data.payment, from, to });
+      Object.assign(r, { name: data.name.trim(), phone: data.phone.trim(), email: data.email.trim(), payment: data.payment, notes: data.notes.trim(), from, to,
+        purpose: data.purpose, eta: data.eta, children: Number(data.children || 0) });
       render();
       toast(`Zapisano zmiany w ${r.id}`);
     },
@@ -906,17 +956,24 @@ function exportCsv() {
 /* ---------- Events ---------- */
 
 const syncHash = () => history.replaceState(null, '', state.mode === 'availability' ? '#dostepnosc' : '#rezerwacje');
-function shiftDay(n) { state.today = addDays(state.today, n); render(); }
+// Changing the viewed day also moves the availability search to arrive that day (same stay length)
+function setDay(d) {
+  state.today = d;
+  const len = Math.max(1, diffDays(state.avail.from, state.avail.to));
+  const moved = { from: d, to: addDays(d, len) };
+  Object.assign(state.avail, moved);
+}
+function shiftDay(n) { setDay(addDays(state.today, n)); render(); }
 
 document.getElementById('prevDay').onclick = () => shiftDay(-1);
 document.getElementById('nextDay').onclick = () => shiftDay(1);
 document.getElementById('dayPicker').onclick = e => {
   e.stopPropagation();
-  openCalendar(e.currentTarget, { mode: 'single', value: state.today, onPick: d => { state.today = d; render(); } });
+  openCalendar(e.currentTarget, { mode: 'single', value: state.today, onPick: d => { setDay(d); render(); } });
 };
 document.getElementById('statsPop').onclick = e => {
   const day = e.target.closest('[data-day]');
-  if (day) { state.today = day.dataset.day; render(); }
+  if (day) { setDay(day.dataset.day); render(); }
 };
 document.getElementById('moreStats').onclick = e => {
   e.stopPropagation();
@@ -926,17 +983,30 @@ document.getElementById('moreStats').onclick = e => {
 
 const card = document.getElementById('card');
 
+/* Expanding a reservation only flips classes on the existing row — no re-render — so the
+ * collapsed panel (always in the DOM) slides open with a CSS grid-rows transition. */
+function toggleDetails(id) {
+  const open = !state.expanded.has(id);
+  open ? state.expanded.add(id) : state.expanded.delete(id);
+  const row = card.querySelector(`[data-res="${id}"]`);
+  const r = reservations.find(x => x.id === id);
+  if (!open && state.noteDraftFor === id) {
+    state.noteDraftFor = null;
+    row.querySelector('.details-clip').innerHTML = renderDetails(r);
+  }
+  row.classList.toggle('is-open', open);
+  row.querySelector('.details-wrap').inert = !open;
+  const btn = row.querySelector('[data-act="toggle"]');
+  btn.setAttribute('aria-expanded', open);
+  btn.setAttribute('aria-label', `${open ? 'Zwiń' : 'Rozwiń'} szczegóły ${r.name}`);
+}
+
 card.addEventListener('input', e => {
   if (e.target.id === 'search') { state.search = e.target.value; render(); }
 });
 
 card.addEventListener('submit', e => {
   e.preventDefault();
-  if (e.target.id === 'availForm') {
-    state.availQuery = { ...state.avail };
-    render();
-    document.getElementById('availResults').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
   const noteFor = e.target.dataset.noteForm;
   if (noteFor) {
     const r = reservations.find(x => x.id === noteFor);
@@ -982,6 +1052,15 @@ card.addEventListener('click', e => {
     render();
     return;
   }
+  if (e.target.closest('#newReservation')) {
+    e.stopPropagation();
+    state.mode = 'availability'; syncHash(); render();
+    const from = document.getElementById('availFrom');
+    from.focus();
+    openCalendar(from, { mode: 'range', from: state.avail.from, to: state.avail.to, phase: 'start', min: HOTEL_TODAY,
+      onPick: range => { Object.assign(state.avail, range); render(); } });
+    return;
+  }
   const exp = e.target.closest('#exportBtn');
   if (exp) {
     e.stopPropagation();
@@ -995,9 +1074,7 @@ card.addEventListener('click', e => {
   const r = id && reservations.find(x => x.id === id);
   switch (btn.dataset.act) {
     case 'toggle':
-      state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
-      if (state.noteDraftFor === id) state.noteDraftFor = null;
-      render();
+      toggleDetails(id);
       break;
     case 'checkin':
       checkedIn.add(id); render(); toast(`${r.name} zameldowany w pokoju ${r.room}`);
@@ -1009,14 +1086,20 @@ card.addEventListener('click', e => {
     case 'edit':
       editReservation(id);
       break;
-    case 'delete': {
-      const idx = reservations.indexOf(r);
-      reservations.splice(idx, 1);
-      state.expanded.delete(id);
-      render();
-      toast(`Usunięto rezerwację ${id}`, { label: 'Cofnij', run: () => { reservations.splice(idx, 0, r); render(); } });
+    case 'delete':
+      confirmDialog({
+        title: `Usunąć rezerwację ${id}?`,
+        text: `${esc(r.name)} · pokój ${r.room} · ${dm(r.from)} → ${dm(r.to)} (${nightsLabel(diffDays(r.from, r.to))}). Zaraz po usunięciu możesz to jeszcze cofnąć.`,
+        confirmLabel: 'Usuń rezerwację',
+        onConfirm: () => {
+          const idx = reservations.indexOf(r);
+          reservations.splice(idx, 1);
+          state.expanded.delete(id);
+          render();
+          toast(`Usunięto rezerwację ${id}`, { label: 'Cofnij', run: () => { reservations.splice(idx, 0, r); render(); } });
+        },
+      });
       break;
-    }
     case 'add-note':
       state.noteDraftFor = id; render();
       break;
@@ -1030,7 +1113,6 @@ card.addEventListener('click', e => {
     case 'propose':
       state.avail.from = btn.dataset.from;
       state.avail.to = btn.dataset.to;
-      state.availQuery = { ...state.avail };
       render();
       toast(`Zmieniono termin na ${dm(state.avail.from)} → ${dm(state.avail.to)}`);
       break;
