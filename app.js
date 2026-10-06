@@ -52,7 +52,7 @@ const state = {
   expanded: new Set(),
   noteDraftFor: null,
   search: '',
-  filters: { range: 'all', payment: 'all', floor: 'all', type: 'all' }, // range: 'all' | days from today | { from, to }
+  filters: { range: 'all', stay: 'all', room: 'all', payment: 'all', floor: 'all', type: 'all' }, // range: 'all' | days from today | { from, to }
   avail: { from: '2024-12-28', to: '2024-12-30', guests: 2 }, // criteria being edited in the form
   statsOpen: false,
   statsFrom: null, // Monday of the week shown in the 7-day tiles (set below)
@@ -109,28 +109,33 @@ function occupancy(night) {
   return { occ, total: rooms.length, pct: rooms.length ? Math.round((occ / rooms.length) * 100) : 0 };
 }
 
+// Statuses describe the viewed day T. Only on the real today are they phrased as „dziś”/„trwa”
+// and offer check-in/out — a guest can't be checked in for a future (or past) day.
 function stayStatus(r, T) {
-  if (checkedOut.has(r.id)) return { label: 'Wymeldowany', tone: 'neutral', dot: 'dot-muted', action: null };
-  if (r.to < T) return { label: `Zakończony ${dm(r.to)}`, tone: 'neutral', dot: 'dot-muted', action: null };
-  if (r.from === T && !checkedIn.has(r.id)) return { label: 'Przyjazd dziś', tone: 'sea', dot: 'dot-arrival', action: 'checkin' };
-  if (r.from > T) return { label: `Przyjazd ${dm(r.from)}`, tone: 'sea', dot: 'dot-arrival', action: null };
-  if (r.to === T) return { label: 'Wyjazd dziś do 14:00', tone: 'amber', dot: 'dot-departure', action: 'checkout' };
-  return { label: 'W hotelu', tone: 'olive', dot: 'dot-inhouse', action: null };
+  const isToday = T === HOTEL_TODAY;
+  if (checkedOut.has(r.id)) return { key: 'checked-out', label: 'Wymeldowany', tone: 'neutral', dot: 'dot-muted', action: null };
+  if (r.to < T) return { key: 'ended', label: `Zakończony ${dm(r.to)}`, tone: 'neutral', dot: 'dot-muted', action: null };
+  if (r.from === T && !checkedIn.has(r.id)) return { key: 'arrival-today', label: isToday ? 'Przyjazd dziś' : `Przyjazd ${dm(T)}`,
+    tone: 'sea', dot: 'dot-arrival', action: isToday ? 'checkin' : null };
+  if (r.from > T) return { key: 'arrival-later', label: `Przyjazd ${dm(r.from)}`, tone: 'sea', dot: 'dot-arrival', action: null };
+  if (r.to === T) return { key: 'departure-today', label: `Wyjazd ${isToday ? 'dziś' : dm(T)} do 14:00`,
+    tone: 'amber', dot: 'dot-departure', action: isToday ? 'checkout' : null };
+  return { key: 'in-house', label: isToday ? 'Pobyt trwa' : 'W trakcie pobytu', tone: 'olive', dot: 'dot-inhouse', action: null };
 }
 
 function roomStatus(r, T) {
-  if (r.to < T) return { label: 'Pobyt zakończony', kind: 'muted', dot: 'dot-muted' };
-  if (checkedOut.has(r.id) || r.to === T) return { label: 'Sprzątanie po pobycie 16:00', kind: 'cleaning', dot: 'dot-cleaning' };
-  if (r.from > T) return { label: 'Oczekuje na przyjazd', kind: 'muted', dot: 'dot-muted' };
+  if (r.to < T) return { key: 'ended', label: 'Pobyt zakończony', kind: 'muted', dot: 'dot-muted' };
+  if (checkedOut.has(r.id) || r.to === T) return { key: 'checkout-cleaning', label: 'Sprzątanie po pobycie 16:00', kind: 'cleaning', dot: 'dot-cleaning' };
+  if (r.from > T) return { key: 'awaiting', label: 'Oczekuje na przyjazd', kind: 'muted', dot: 'dot-muted' };
   if (r.from === T && !checkedIn.has(r.id)) {
     const turnover = reservations.some(o => o !== r && o.room === r.room && o.to === T && !checkedOut.has(o.id));
     return turnover
-      ? { label: 'Gotowy ok. 16:00', kind: 'cleaning', dot: 'dot-cleaning' }
-      : { label: 'Pokój gotowy', kind: 'ready', dot: 'dot-ready' };
+      ? { key: 'turnover', label: 'Gotowy ok. 16:00', kind: 'cleaning', dot: 'dot-cleaning' }
+      : { key: 'ready', label: 'Pokój gotowy', kind: 'ready', dot: 'dot-ready' };
   }
   return r.cleaning === 'none'
-    ? { label: 'Brak sprzątania na życzenie gościa', kind: 'muted', dot: 'dot-muted' }
-    : { label: 'Sprzątanie dzienne 15:00', kind: 'cleaning', dot: 'dot-cleaning' };
+    ? { key: 'no-cleaning', label: 'Brak sprzątania na życzenie gościa', kind: 'muted', dot: 'dot-muted' }
+    : { key: 'daily-cleaning', label: 'Sprzątanie dzienne 15:00', kind: 'cleaning', dot: 'dot-cleaning' };
 }
 
 // Selected date filter as inclusive [start, end] days, or null when showing all reservations
@@ -148,6 +153,8 @@ function visibleReservations() {
   return reservations
     // no date filter → current and upcoming stays only; a chosen date range shows whatever overlaps it
     .filter(r => span ? r.to >= span.start && r.from <= span.end : r.to >= state.today)
+    .filter(r => f.stay === 'all' || stayStatus(r, state.today).key === f.stay)
+    .filter(r => f.room === 'all' || roomStatus(r, state.today).key === f.room)
     .filter(r => f.payment === 'all' || r.payment === f.payment)
     .filter(r => f.floor === 'all' || roomByNo[r.room].floor === Number(f.floor))
     .filter(r => f.type === 'all' || roomByNo[r.room].type === f.type)
@@ -288,6 +295,8 @@ function renderStats() {
   const live = reservations.filter(r => !checkedOut.has(r.id));
   const arrivals = live.filter(r => r.from === T).length;
   const departures = live.filter(r => r.to === T).length;
+  // same rule as the „Pobyt trwa” / „W trakcie pobytu” status in the reservations table
+  const inHouse = reservations.filter(r => r.from <= T && r.to >= T && stayStatus(r, T).key === 'in-house').length;
   const css = getComputedStyle(document.documentElement);
   const color = name => css.getPropertyValue(name).trim();
 
@@ -330,6 +339,8 @@ function renderStats() {
         <div class="chips">
           <span class="chip chip--sea">${ICON('dot-arrival', 6)}${arrivals} ${plural(arrivals, 'przyjazd', 'przyjazdy', 'przyjazdów')} ${dayWord}</span>
           <span class="chip chip--amber">${ICON('dot-departure', 6)}${departures} ${plural(departures, 'wyjazd', 'wyjazdy', 'wyjazdów')} ${dayWord}</span>
+          <span class="chip chip--olive">${ICON('dot-inhouse', 6)}${inHouse} ${T === HOTEL_TODAY
+            ? plural(inHouse, 'pobyt trwa', 'pobyty trwają', 'pobytów trwa') : 'w trakcie pobytu'}</span>
           <span class="chip chip--green">${ICON('dot-free', 6)}${free} ${plural(free, 'pokój wolny', 'pokoje wolne', 'pokoi wolnych')} na noc</span>
         </div>
       </div>
@@ -351,6 +362,16 @@ const searchBox = () => `<label class="search">
   </label>`;
 
 const FILTERS = {
+  stay: {
+    label: 'Status zakwaterowania',
+    get options() { // worded like the table statuses for the viewed day
+      const today = state.today === HOTEL_TODAY, day = today ? 'dziś' : dm(state.today);
+      return [['all', 'Wszystkie'], ['arrival-today', `Przyjazd ${day}`], ['in-house', today ? 'Pobyt trwa' : 'W trakcie pobytu'],
+        ['departure-today', `Wyjazd ${day}`], ['checked-out', 'Wymeldowany']];
+    },
+  },
+  room: { label: 'Status pokoju', options: [['all', 'Wszystkie'], ['ready', 'Pokój gotowy'],
+    ['daily-cleaning', 'Sprzątanie dzienne'], ['checkout-cleaning', 'Sprzątanie po pobycie'], ['no-cleaning', 'Bez sprzątania']] },
   range: { label: 'Daty', options: [['all', 'Wszystkie'], [1, 'Dziś'], [7, 'Najbliższe 7 dni'], [14, 'Najbliższe 14 dni'], ['custom', 'Wybierz zakres…']] },
   payment: { label: 'Płatność', options: [['all', 'Wszystkie'], ['Karta', 'Karta'], ['Gotówka', 'Gotówka'], ['Faktura', 'Faktura'], ['Przelew', 'Przelew']] },
   floor: { label: 'Piętro', options: [['all', 'Wszystkie'], ['1', 'Piętro 1'], ['2', 'Piętro 2']] },
@@ -429,7 +450,7 @@ function renderReservations() {
         </div>
       </div>
       <div class="filters">
-        ${filterBtn('range')}${filterBtn('payment')}${filterBtn('floor')}${filterBtn('type')}
+        ${filterBtn('range')}${filterBtn('stay')}${filterBtn('room')}${filterBtn('payment')}${filterBtn('floor')}${filterBtn('type')}
         <button class="link-btn link-btn--plain" id="clearFilters">Wyczyść filtry</button>
       </div>
     </div>
@@ -1125,7 +1146,7 @@ card.addEventListener('click', e => {
     return;
   }
   if (e.target.closest('#clearFilters')) {
-    state.filters = { range: 'all', payment: 'all', floor: 'all', type: 'all' };
+    state.filters = { range: 'all', stay: 'all', room: 'all', payment: 'all', floor: 'all', type: 'all' };
     state.search = '';
     render();
     return;
